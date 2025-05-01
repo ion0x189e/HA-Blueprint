@@ -223,9 +223,9 @@ action:
             value_template: >
               {% set is_wkd = now().weekday() < 5 %}
               {% set time_now = now().strftime("%H:%M") %}
-              {% set open_time = is_wkd and states('input_text.weekday_open_time') or states('input_text.weekend_open_time') %}
+              {% set open_time = is_wkd and !input weekday_open_time or !input weekend_open_time %}
               {% set sun_up = is_state('sun.sun', 'above_horizon') %}
-              {{ sun_up and time_now >= (open_time or '07:00') }}
+              {{ sun_up and time_now >= open_time }}
         sequence:
           - service: cover.set_cover_position
             target:
@@ -255,9 +255,9 @@ action:
             value_template: >
               {% set is_wkd = now().weekday() < 5 %}
               {% set time_now = now().strftime("%H:%M") %}
-              {% set close_time = is_wkd and states('input_text.weekday_close_time') or states('input_text.weekend_close_time') %}
+              {% set close_time = is_wkd and !input weekday_close_time or !input weekend_close_time %}
               {% set sun_down = is_state('sun.sun', 'below_horizon') %}
-              {{ sun_down or time_now >= (close_time or '21:00') }}
+              {{ sun_down or time_now >= close_time }}
         sequence:
           - service: cover.set_cover_position
             target:
@@ -354,7 +354,7 @@ action:
               entity_id: !input cover_entity
             data:
               position: !input evening_position
-      
+
       # Lever du soleil - Ouverture des volets le matin (si pas de gestion horaire)
       - conditions:
           - condition: trigger
@@ -371,7 +371,7 @@ action:
               entity_id: !input cover_entity
             data:
               position: !input morning_position
-      
+
       # Coucher du soleil - Fermeture des volets le soir (si pas de gestion horaire)
       - conditions:
           - condition: trigger
@@ -388,7 +388,7 @@ action:
               entity_id: !input cover_entity
             data:
               position: !input evening_position
-      
+
       # Mode été avec soleil direct et chaleur
       - conditions:
           - condition: state
@@ -400,7 +400,7 @@ action:
           - condition: template
             value_template: >
               {% set az = state_attr('sun.sun', 'azimuth') | float(0) %}
-              {% set fa = (facade_orientation | default(180)) | float %}
+              {% set fa = float(!input facade_orientation) %}
               {% set diff = (az - fa) | abs %}
               {% if diff > 180 %}
                 {% set diff = 360 - diff %}
@@ -416,7 +416,7 @@ action:
               entity_id: !input cover_entity
             data:
               position: !input summer_position
-      
+
       # Température intérieure élevée - Protection
       - conditions:
           - condition: numeric_state
