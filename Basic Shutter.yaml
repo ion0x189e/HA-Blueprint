@@ -204,25 +204,8 @@ condition:
     entity_id: !input disable_automation
     state: "off"
 
-variables:
-  is_weekday: >
-    {{ now().weekday() < 5 }}
-  current_time: >
-    {{ now().strftime("%H:%M") }}
-  open_time: >
-    {% if is_weekday %}
-      {{ states(weekday_open_time) }}
-    {% else %}
-      {{ states(weekend_open_time) }}
-    {% endif %}
-  close_time: >
-    {% if is_weekday %}
-      {{ states(weekday_close_time) }}
-    {% else %}
-      {{ states(weekend_close_time) }}
-    {% endif %}
-  sun_is_up: >
-    {{ is_state('sun.sun', 'above_horizon') }}
+# Variables can be defined here if needed, but the complex time logic
+# is moved directly into the conditions below for clarity.
 
 action:
   - choose:
@@ -472,8 +455,8 @@ action:
           - condition: template
             value_template: >
               {% set is_wkd = now().weekday() < 5 %}
-              {% set time_now = now().strftime("%H:%M") %}
-              {% set open_time = is_wkd and states('input_datetime.weekday_open_time') or states('input_datetime.weekend_open_time') %}
+              {% set time_now = now().strftime('%H:%M:%S') %}
+              {% set open_time = weekday_open_time if is_wkd else weekend_open_time %}
               {% set sun_up = is_state('sun.sun', 'above_horizon') %}
               {{ sun_up and time_now >= open_time }}
         sequence:
@@ -504,8 +487,8 @@ action:
           - condition: template
             value_template: >
               {% set is_wkd = now().weekday() < 5 %}
-              {% set time_now = now().strftime("%H:%M") %}
-              {% set close_time = is_wkd and states('input_datetime.weekday_close_time') or states('input_datetime.weekend_close_time') %}
+              {% set time_now = now().strftime('%H:%M:%S') %}
+              {% set close_time = weekday_close_time if is_wkd else weekend_close_time %}
               {% set sun_down = is_state('sun.sun', 'below_horizon') %}
               {{ sun_down or time_now >= close_time }}
         sequence:
@@ -652,7 +635,7 @@ action:
           - condition: template
             value_template: >
               {% set az = state_attr('sun.sun', 'azimuth') | float(0) %}
-              {% set fa = !input facade_orientation | float(180) %}
+              {% set fa = facade_orientation | float(180) %}
               {% set diff = (az - fa) | abs %}
               {% if diff > 180 %}
                 {% set diff = 360 - diff %}
