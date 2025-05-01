@@ -1,17 +1,18 @@
 blueprint:
   name: Gestion Avancée des Volets Roulants
   description: >
-    Automatisation complète pour volets roulants basée sur le soleil,
+    Automatisation complète pour un ou plusieurs volets roulants basée sur le soleil,
     la température et le mode été/hiver. Permet le contrôle manuel,
     la désactivation temporaire et la gestion horaire intelligente.
   domain: automation
   input:
     cover_entity:
-      name: Volet roulant
-      description: L'entité du volet roulant à contrôler
+      name: Volets roulants
+      description: Les entités des volets roulants à contrôler (sélection multiple possible)
       selector:
         entity:
           domain: cover
+          multiple: true
     temperature_indoor:
       name: Capteur de température intérieure
       description: Capteur de température intérieure
