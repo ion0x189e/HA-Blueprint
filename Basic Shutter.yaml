@@ -226,12 +226,2772 @@ variables:
 
 action:
   - choose:
+      # Mode intelligent - Ouverture (matin)blueprint:
+  name: Gestion Avancée des Volets Roulants
+  description: >
+    Automatisation complète pour un ou plusieurs volets roulants basée sur le soleil,
+    la température et le mode été/hiver. Permet le contrôle manuel,
+    la désactivation temporaire et la gestion horaire intelligente.
+  domain: automation
+  input:
+    cover_entity:
+      name: Volets roulants
+      description: Les entités des volets roulants à contrôler (sélection multiple possible)
+      selector:
+        entity:
+          domain: cover
+          multiple: true
+    temperature_indoor:
+      name: Capteur de température intérieure
+      description: Capteur de température intérieure
+      selector:
+        entity:
+          domain: sensor
+    temperature_outdoor:
+      name: Capteur de température extérieure
+      description: Capteur de température extérieure
+      selector:
+        entity:
+          domain: sensor
+    disable_automation:
+      name: Désactiver l'automatisation
+      description: Un interrupteur pour désactiver temporairement l'automatisation
+      selector:
+        entity:
+          domain: input_boolean
+    summer_mode:
+      name: Mode été
+      description: Activer le mode été (fermeture partielle en cas de chaleur)
+      selector:
+        entity:
+          domain: input_boolean
+    facade_orientation:
+      name: Orientation de la façade
+      description: Orientation en degrés (0=N, 90=E, 180=S, 270=O)
+      default: 180
+      selector:
+        number:
+          min: 0
+          max: 359
+          step: 1
+          mode: slider
+    morning_position:
+      name: Position au lever du soleil
+      description: Position du volet le matin (0-100%)
+      default: 100
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          mode: slider
+    evening_position:
+      name: Position au coucher du soleil
+      description: Position du volet le soir (0-100%)
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          mode: slider
+    summer_position:
+      name: Position en mode été
+      description: Position en cas de chaleur/soleil direct (0-100%)
+      default: 40
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          mode: slider
+    temp_threshold_out:
+      name: Seuil température extérieure
+      description: Seuil pour activer la protection solaire
+      default: 25
+      selector:
+        number:
+          min: 15
+          max: 40
+          step: 0.5
+          mode: box
+    temp_threshold_in:
+      name: Seuil température intérieure
+      description: Seuil pour maintenir la fraîcheur
+      default: 26
+      selector:
+        number:
+          min: 18
+          max: 40
+          step: 0.5
+          mode: box
+    morning_offset:
+      name: Décalage lever soleil
+      description: En minutes (- = avant, + = après)
+      default: 0
+      selector:
+        number:
+          min: -120
+          max: 120
+          step: 5
+          mode: box
+    evening_offset:
+      name: Décalage coucher soleil
+      description: En minutes (- = avant, + = après)
+      default: 0
+      selector:
+        number:
+          min: -120
+          max: 120
+          step: 5
+          mode: box
+    enable_time_schedule:
+      name: Activer la gestion horaire
+      description: Utiliser des horaires fixes (sans tenir compte du soleil)
+      default: false
+      selector:
+        boolean: {}
+    enable_smart_schedule:
+      name: Activer la gestion horaire intelligente
+      description: Combine les horaires fixes ET la position du soleil
+      default: false
+      selector:
+        boolean: {}
+    weekday_open_time:
+      name: Heure d'ouverture en semaine
+      description: Heure d'ouverture des volets en semaine (format HH:MM)
+      default: "07:00"
+      selector:
+        time: {}
+    weekday_close_time:
+      name: Heure de fermeture en semaine
+      description: Heure de fermeture des volets en semaine (format HH:MM)
+      default: "21:00"
+      selector:
+        time: {}
+    weekend_open_time:
+      name: Heure d'ouverture week-end
+      description: Heure d'ouverture des volets le week-end (format HH:MM)
+      default: "08:00"
+      selector:
+        time: {}
+    weekend_close_time:
+      name: Heure de fermeture week-end
+      description: Heure de fermeture des volets le week-end (format HH:MM)
+      default: "21:00"
+      selector:
+        time: {}
+
+mode: restart
+max_exceeded: silent
+
+trigger:
+  # Déclencheurs basés sur le soleil
+  - platform: sun
+    event: sunrise
+    offset: !input morning_offset
+    id: sunrise_trigger
+  - platform: sun
+    event: sunset
+    offset: !input evening_offset
+    id: sunset_trigger
+  
+  # Déclencheurs basés sur l'heure
+  - platform: time
+    at: !input weekday_open_time
+    id: weekday_open_trigger
+  - platform: time
+    at: !input weekday_close_time
+    id: weekday_close_trigger
+  - platform: time
+    at: !input weekend_open_time
+    id: weekend_open_trigger
+  - platform: time
+    at: !input weekend_close_time
+    id: weekend_close_trigger
+  
+  # Vérifications périodiques et changements d'état
+  - platform: time_pattern
+    minutes: "/15"
+    id: periodic_check
+  - platform: state
+    entity_id: !input summer_mode
+    id: mode_change
+  - platform: state
+    entity_id: !input disable_automation
+    id: disable_change
+  - platform: state
+    entity_id: !input temperature_indoor
+    id: temp_in_change
+  - platform: state
+    entity_id: !input temperature_outdoor
+    id: temp_out_change
+
+condition:
+  - condition: state
+    entity_id: !input disable_automation
+    state: "off"
+
+variables:
+  is_weekday: "{{ now().weekday() < 5 }}"
+  current_time: "{{ now().strftime('%H:%M') }}"
+  open_time: >
+    {% if now().weekday() < 5 %}
+      {{ states('sensor.time') >= (states('input_datetime.' + 'weekday_open_time')) }}
+    {% else %}
+      {{ states('sensor.time') >= (states('input_datetime.' + 'weekend_open_time')) }}
+    {% endif %}
+  close_time: >
+    {% if now().weekday() < 5 %}
+      {{ states('sensor.time') >= (states('input_datetime.' + 'weekday_close_time')) }}
+    {% else %}
+      {{ states('sensor.time') >= (states('input_datetime.' + 'weekend_close_time')) }}
+    {% endif %}
+  sun_is_up: "{{ is_state('sun.sun', 'above_horizon') }}"
+
+action:
+  - choose:
       # Mode intelligent - Ouverture (matin)
       - conditions:
           - condition: state
             entity_id: !input enable_smart_schedule
             state: "on"
           - condition: state
+            entity_id: !input enable_time_schedule
+            state: "off"
+          - condition: or
+            conditions:
+              - condition: trigger
+                id: sunrise_trigger
+              - condition: trigger
+                id: weekday_open_trigger
+              - condition: trigger
+                id: weekend_open_trigger
+              - condition: trigger
+                id: periodic_check
+          - condition: template
+            value_template: >
+              {% set is_wkd = now().weekday() < 5 %}
+              {% set time_now = now().strftime("%H:%M") %}
+              {% set open_time = is_wkd and states('input_datetime.weekday_open_time') or states('input_datetime.weekend_open_time') %}
+              {% set sun_up = is_state('sun.sun', 'above_horizon') %}
+              {{ sun_up and time_now >= open_time }}
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input morning_position
+
+      # Mode intelligent - Fermeture (soir)
+      - conditions:
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "off"
+          - condition: or
+            conditions:
+              - condition: trigger
+                id: sunset_trigger
+              - condition: trigger
+                id: weekday_close_trigger
+              - condition: trigger
+                id: weekend_close_trigger
+              - condition: trigger
+                id: periodic_check
+          - condition: template
+            value_template: >
+              {% set is_wkd = now().weekday() < 5 %}
+              {% set time_now = now().strftime("%H:%M") %}
+              {% set close_time = is_wkd and states('input_datetime.weekday_close_time') or states('input_datetime.weekend_close_time') %}
+              {% set sun_down = is_state('sun.sun', 'below_horizon') %}
+              {{ sun_down or time_now >= close_time }}
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input evening_position
+
+      # Gestion horaire seule - Ouverture en semaine
+      - conditions:
+          - condition: trigger
+            id: weekday_open_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+          - condition: time
+            weekday:
+              - mon
+              - tue
+              - wed
+              - thu
+              - fri
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input morning_position
+
+      # Gestion horaire seule - Ouverture weekend
+      - conditions:
+          - condition: trigger
+            id: weekend_open_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+          - condition: time
+            weekday:
+              - sat
+              - sun
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input morning_position
+
+      # Gestion horaire seule - Fermeture en semaine
+      - conditions:
+          - condition: trigger
+            id: weekday_close_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+          - condition: time
+            weekday:
+              - mon
+              - tue
+              - wed
+              - thu
+              - fri
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input evening_position
+
+      # Gestion horaire seule - Fermeture weekend
+      - conditions:
+          - condition: trigger
+            id: weekend_close_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+          - condition: time
+            weekday:
+              - sat
+              - sun
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input evening_position
+      
+      # Lever du soleil - Ouverture des volets le matin
+      # Uniquement si les gestions horaires sont désactivées
+      - conditions:
+          - condition: trigger
+            id: sunrise_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "off"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input morning_position
+      
+      # Coucher du soleil - Fermeture des volets le soir
+      # Uniquement si les gestions horaires sont désactivées
+      - conditions:
+          - condition: trigger
+            id: sunset_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "off"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input evening_position
+      
+      # Mode été avec soleil direct et chaleur
+      - conditions:
+          - condition: state
+            entity_id: !input summer_mode
+            state: "on"
+          - condition: state
+            entity_id: sun.sun
+            state: "above_horizon"
+          - condition: template
+            value_template: >
+              {% set az = state_attr('sun.sun', 'azimuth') | float(0) %}
+              {% set fa = !input facade_orientation | float(180) %}
+              {% set diff = (az - fa) | abs %}
+              {% if diff > 180 %}
+                {% set diff = 360 - diff %}
+              {% endif %}
+              {% set el = state_attr('sun.sun', 'elevation') | float(0) %}
+              {{ is_state('sun.sun', 'above_horizon') and el > 0 and diff < 90 }}
+          - condition: numeric_state
+            entity_id: !input temperature_outdoor
+            above: !input temp_threshold_out
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input summer_position
+      
+      # Température intérieure élevée - Protection
+      - conditions:
+          - condition: numeric_state
+            entity_id: !input temperature_indoor
+            above: !input temp_threshold_in
+          - condition: numeric_state
+            entity_id: !input temperature_outdoor
+            above: !input temp_threshold_in
+          - condition: state
+            entity_id: sun.sun
+            state: "above_horizon"
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input summer_position
+
+      - conditions:blueprint:
+  name: Gestion Avancée des Volets Roulants
+  description: >
+    Automatisation complète pour un ou plusieurs volets roulants basée sur le soleil,
+    la température et le mode été/hiver. Permet le contrôle manuel,
+    la désactivation temporaire et la gestion horaire intelligente.
+  domain: automation
+  input:
+    cover_entity:
+      name: Volets roulants
+      description: Les entités des volets roulants à contrôler (sélection multiple possible)
+      selector:
+        entity:
+          domain: cover
+          multiple: true
+    temperature_indoor:
+      name: Capteur de température intérieure
+      description: Capteur de température intérieure
+      selector:
+        entity:
+          domain: sensor
+    temperature_outdoor:
+      name: Capteur de température extérieure
+      description: Capteur de température extérieure
+      selector:
+        entity:
+          domain: sensor
+    disable_automation:
+      name: Désactiver l'automatisation
+      description: Un interrupteur pour désactiver temporairement l'automatisation
+      selector:
+        entity:
+          domain: input_boolean
+    summer_mode:
+      name: Mode été
+      description: Activer le mode été (fermeture partielle en cas de chaleur)
+      selector:
+        entity:
+          domain: input_boolean
+    facade_orientation:
+      name: Orientation de la façade
+      description: Orientation en degrés (0=N, 90=E, 180=S, 270=O)
+      default: 180
+      selector:
+        number:
+          min: 0
+          max: 359
+          step: 1
+          mode: slider
+    morning_position:
+      name: Position au lever du soleil
+      description: Position du volet le matin (0-100%)
+      default: 100
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          mode: slider
+    evening_position:
+      name: Position au coucher du soleil
+      description: Position du volet le soir (0-100%)
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          mode: slider
+    summer_position:
+      name: Position en mode été
+      description: Position en cas de chaleur/soleil direct (0-100%)
+      default: 40
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          mode: slider
+    temp_threshold_out:
+      name: Seuil température extérieure
+      description: Seuil pour activer la protection solaire
+      default: 25
+      selector:
+        number:
+          min: 15
+          max: 40
+          step: 0.5
+          mode: box
+    temp_threshold_in:
+      name: Seuil température intérieure
+      description: Seuil pour maintenir la fraîcheur
+      default: 26
+      selector:
+        number:
+          min: 18
+          max: 40
+          step: 0.5
+          mode: box
+    morning_offset:
+      name: Décalage lever soleil
+      description: En minutes (- = avant, + = après)
+      default: 0
+      selector:
+        number:
+          min: -120
+          max: 120
+          step: 5
+          mode: box
+    evening_offset:
+      name: Décalage coucher soleil
+      description: En minutes (- = avant, + = après)
+      default: 0
+      selector:
+        number:
+          min: -120
+          max: 120
+          step: 5
+          mode: box
+    enable_time_schedule:
+      name: Activer la gestion horaire
+      description: Utiliser des horaires fixes (sans tenir compte du soleil)
+      default: false
+      selector:
+        boolean: {}
+    enable_smart_schedule:
+      name: Activer la gestion horaire intelligente
+      description: Combine les horaires fixes ET la position du soleil
+      default: false
+      selector:
+        boolean: {}
+    weekday_open_time:
+      name: Heure d'ouverture en semaine
+      description: Heure d'ouverture des volets en semaine (format HH:MM)
+      default: "07:00"
+      selector:
+        time: {}
+    weekday_close_time:
+      name: Heure de fermeture en semaine
+      description: Heure de fermeture des volets en semaine (format HH:MM)
+      default: "21:00"
+      selector:
+        time: {}
+    weekend_open_time:
+      name: Heure d'ouverture week-end
+      description: Heure d'ouverture des volets le week-end (format HH:MM)
+      default: "08:00"
+      selector:
+        time: {}
+    weekend_close_time:
+      name: Heure de fermeture week-end
+      description: Heure de fermeture des volets le week-end (format HH:MM)
+      default: "21:00"
+      selector:
+        time: {}
+
+mode: restart
+max_exceeded: silent
+
+trigger:
+  # Déclencheurs basés sur le soleil
+  - platform: sun
+    event: sunrise
+    offset: !input morning_offset
+    id: sunrise_trigger
+  - platform: sun
+    event: sunset
+    offset: !input evening_offset
+    id: sunset_trigger
+  
+  # Déclencheurs basés sur l'heure
+  - platform: time
+    at: !input weekday_open_time
+    id: weekday_open_trigger
+  - platform: time
+    at: !input weekday_close_time
+    id: weekday_close_trigger
+  - platform: time
+    at: !input weekend_open_time
+    id: weekend_open_trigger
+  - platform: time
+    at: !input weekend_close_time
+    id: weekend_close_trigger
+  
+  # Vérifications périodiques et changements d'état
+  - platform: time_pattern
+    minutes: "/15"
+    id: periodic_check
+  - platform: state
+    entity_id: !input summer_mode
+    id: mode_change
+  - platform: state
+    entity_id: !input disable_automation
+    id: disable_change
+  - platform: state
+    entity_id: !input temperature_indoor
+    id: temp_in_change
+  - platform: state
+    entity_id: !input temperature_outdoor
+    id: temp_out_change
+
+condition:
+  - condition: state
+    entity_id: !input disable_automation
+    state: "off"
+
+variables:
+  is_weekday: "{{ now().weekday() < 5 }}"
+  current_time: "{{ now().strftime('%H:%M') }}"
+  open_time: >
+    {% if now().weekday() < 5 %}
+      {{ states('sensor.time') >= (states('input_datetime.' + 'weekday_open_time')) }}
+    {% else %}
+      {{ states('sensor.time') >= (states('input_datetime.' + 'weekend_open_time')) }}
+    {% endif %}
+  close_time: >
+    {% if now().weekday() < 5 %}
+      {{ states('sensor.time') >= (states('input_datetime.' + 'weekday_close_time')) }}
+    {% else %}
+      {{ states('sensor.time') >= (states('input_datetime.' + 'weekend_close_time')) }}
+    {% endif %}
+  sun_is_up: "{{ is_state('sun.sun', 'above_horizon') }}"
+
+action:
+  - choose:
+      # Mode intelligent - Ouverture (matin)
+      - conditions:
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "off"
+          - condition: or
+            conditions:
+              - condition: trigger
+                id: sunrise_trigger
+              - condition: trigger
+                id: weekday_open_trigger
+              - condition: trigger
+                id: weekend_open_trigger
+              - condition: trigger
+                id: periodic_check
+          - condition: template
+            value_template: >
+              {% set is_wkd = now().weekday() < 5 %}
+              {% set time_now = now().strftime("%H:%M") %}
+              {% set open_time = is_wkd and states('input_datetime.weekday_open_time') or states('input_datetime.weekend_open_time') %}
+              {% set sun_up = is_state('sun.sun', 'above_horizon') %}
+              {{ sun_up and time_now >= open_time }}
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input morning_position
+
+      # Mode intelligent - Fermeture (soir)
+      - conditions:
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "off"
+          - condition: or
+            conditions:
+              - condition: trigger
+                id: sunset_trigger
+              - condition: trigger
+                id: weekday_close_trigger
+              - condition: trigger
+                id: weekend_close_trigger
+              - condition: trigger
+                id: periodic_check
+          - condition: template
+            value_template: >
+              {% set is_wkd = now().weekday() < 5 %}
+              {% set time_now = now().strftime("%H:%M") %}
+              {% set close_time = is_wkd and states('input_datetime.weekday_close_time') or states('input_datetime.weekend_close_time') %}
+              {% set sun_down = is_state('sun.sun', 'below_horizon') %}
+              {{ sun_down or time_now >= close_time }}
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input evening_position
+
+      # Gestion horaire seule - Ouverture en semaine
+      - conditions:
+          - condition: trigger
+            id: weekday_open_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+          - condition: time
+            weekday:
+              - mon
+              - tue
+              - wed
+              - thu
+              - fri
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input morning_position
+
+      # Gestion horaire seule - Ouverture weekend
+      - conditions:
+          - condition: trigger
+            id: weekend_open_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+          - condition: time
+            weekday:
+              - sat
+              - sun
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input morning_position
+
+      # Gestion horaire seule - Fermeture en semaine
+      - conditions:
+          - condition: trigger
+            id: weekday_close_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+          - condition: time
+            weekday:
+              - mon
+              - tue
+              - wed
+              - thu
+              - fri
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input evening_position
+
+      # Gestion horaire seule - Fermeture weekend
+      - conditions:
+          - condition: trigger
+            id: weekend_close_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+          - condition: time
+            weekday:
+              - sat
+              - sun
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input evening_position
+      
+      # Lever du soleil - Ouverture des volets le matin
+      # Uniquement si les gestions horaires sont désactivées
+      - conditions:
+          - condition: trigger
+            id: sunrise_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "off"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input morning_position
+      
+      # Coucher du soleil - Fermeture des volets le soir
+      # Uniquement si les gestions horaires sont désactivées
+      - conditions:
+          - condition: trigger
+            id: sunset_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "off"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input evening_position
+      
+      # Mode été avec soleil direct et chaleur
+      - conditions:
+          - condition: state
+            entity_id: !input summer_mode
+            state: "on"
+          - condition: state
+            entity_id: sun.sun
+            state: "above_horizon"
+          - condition: template
+            value_template: >
+              {% set az = state_attr('sun.sun', 'azimuth') | float(0) %}
+              {% set fa = !input facade_orientation | float(180) %}
+              {% set diff = (az - fa) | abs %}
+              {% if diff > 180 %}
+                {% set diff = 360 - diff %}
+              {% endif %}
+              {% set el = state_attr('sun.sun', 'elevation') | float(0) %}
+              {{ is_state('sun.sun', 'above_horizon') and el > 0 and diff < 90 }}
+          - condition: numeric_state
+            entity_id: !input temperature_outdoor
+            above: !input temp_threshold_out
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input summer_position
+      
+      # Température intérieure élevée - Protection
+      - conditions:
+          - condition: numeric_state
+            entity_id: !input temperature_indoor
+            above: !input temp_threshold_in
+          - condition: numeric_state
+            entity_id: !input temperature_outdoor
+            above: !input temp_threshold_in
+          - condition: state
+            entity_id: sun.sun
+            state: "above_horizon"
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input summer_position
+
+          - condition: stateblueprint:
+  name: Gestion Avancée des Volets Roulants
+  description: >
+    Automatisation complète pour un ou plusieurs volets roulants basée sur le soleil,
+    la température et le mode été/hiver. Permet le contrôle manuel,
+    la désactivation temporaire et la gestion horaire intelligente.
+  domain: automation
+  input:
+    cover_entity:
+      name: Volets roulants
+      description: Les entités des volets roulants à contrôler (sélection multiple possible)
+      selector:
+        entity:
+          domain: cover
+          multiple: true
+    temperature_indoor:
+      name: Capteur de température intérieure
+      description: Capteur de température intérieure
+      selector:
+        entity:
+          domain: sensor
+    temperature_outdoor:
+      name: Capteur de température extérieure
+      description: Capteur de température extérieure
+      selector:
+        entity:
+          domain: sensor
+    disable_automation:
+      name: Désactiver l'automatisation
+      description: Un interrupteur pour désactiver temporairement l'automatisation
+      selector:
+        entity:
+          domain: input_boolean
+    summer_mode:
+      name: Mode été
+      description: Activer le mode été (fermeture partielle en cas de chaleur)
+      selector:
+        entity:
+          domain: input_boolean
+    facade_orientation:
+      name: Orientation de la façade
+      description: Orientation en degrés (0=N, 90=E, 180=S, 270=O)
+      default: 180
+      selector:
+        number:
+          min: 0
+          max: 359
+          step: 1
+          mode: slider
+    morning_position:
+      name: Position au lever du soleil
+      description: Position du volet le matin (0-100%)
+      default: 100
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          mode: slider
+    evening_position:
+      name: Position au coucher du soleil
+      description: Position du volet le soir (0-100%)
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          mode: slider
+    summer_position:
+      name: Position en mode été
+      description: Position en cas de chaleur/soleil direct (0-100%)
+      default: 40
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          mode: slider
+    temp_threshold_out:
+      name: Seuil température extérieure
+      description: Seuil pour activer la protection solaire
+      default: 25
+      selector:
+        number:
+          min: 15
+          max: 40
+          step: 0.5
+          mode: box
+    temp_threshold_in:
+      name: Seuil température intérieure
+      description: Seuil pour maintenir la fraîcheur
+      default: 26
+      selector:
+        number:
+          min: 18
+          max: 40
+          step: 0.5
+          mode: box
+    morning_offset:
+      name: Décalage lever soleil
+      description: En minutes (- = avant, + = après)
+      default: 0
+      selector:
+        number:
+          min: -120
+          max: 120
+          step: 5
+          mode: box
+    evening_offset:
+      name: Décalage coucher soleil
+      description: En minutes (- = avant, + = après)
+      default: 0
+      selector:
+        number:
+          min: -120
+          max: 120
+          step: 5
+          mode: box
+    enable_time_schedule:
+      name: Activer la gestion horaire
+      description: Utiliser des horaires fixes (sans tenir compte du soleil)
+      default: false
+      selector:
+        boolean: {}
+    enable_smart_schedule:
+      name: Activer la gestion horaire intelligente
+      description: Combine les horaires fixes ET la position du soleil
+      default: false
+      selector:
+        boolean: {}
+    weekday_open_time:
+      name: Heure d'ouverture en semaine
+      description: Heure d'ouverture des volets en semaine (format HH:MM)
+      default: "07:00"
+      selector:
+        time: {}
+    weekday_close_time:
+      name: Heure de fermeture en semaine
+      description: Heure de fermeture des volets en semaine (format HH:MM)
+      default: "21:00"
+      selector:
+        time: {}
+    weekend_open_time:
+      name: Heure d'ouverture week-end
+      description: Heure d'ouverture des volets le week-end (format HH:MM)
+      default: "08:00"
+      selector:
+        time: {}
+    weekend_close_time:
+      name: Heure de fermeture week-end
+      description: Heure de fermeture des volets le week-end (format HH:MM)
+      default: "21:00"
+      selector:
+        time: {}
+
+mode: restart
+max_exceeded: silent
+
+trigger:
+  # Déclencheurs basés sur le soleil
+  - platform: sun
+    event: sunrise
+    offset: !input morning_offset
+    id: sunrise_trigger
+  - platform: sun
+    event: sunset
+    offset: !input evening_offset
+    id: sunset_trigger
+  
+  # Déclencheurs basés sur l'heure
+  - platform: time
+    at: !input weekday_open_time
+    id: weekday_open_trigger
+  - platform: time
+    at: !input weekday_close_time
+    id: weekday_close_trigger
+  - platform: time
+    at: !input weekend_open_time
+    id: weekend_open_trigger
+  - platform: time
+    at: !input weekend_close_time
+    id: weekend_close_trigger
+  
+  # Vérifications périodiques et changements d'état
+  - platform: time_pattern
+    minutes: "/15"
+    id: periodic_check
+  - platform: state
+    entity_id: !input summer_mode
+    id: mode_change
+  - platform: state
+    entity_id: !input disable_automation
+    id: disable_change
+  - platform: state
+    entity_id: !input temperature_indoor
+    id: temp_in_change
+  - platform: state
+    entity_id: !input temperature_outdoor
+    id: temp_out_change
+
+condition:
+  - condition: state
+    entity_id: !input disable_automation
+    state: "off"
+
+variables:
+  is_weekday: "{{ now().weekday() < 5 }}"
+  current_time: "{{ now().strftime('%H:%M') }}"
+  open_time: >
+    {% if now().weekday() < 5 %}
+      {{ states('sensor.time') >= (states('input_datetime.' + 'weekday_open_time')) }}
+    {% else %}
+      {{ states('sensor.time') >= (states('input_datetime.' + 'weekend_open_time')) }}
+    {% endif %}
+  close_time: >
+    {% if now().weekday() < 5 %}
+      {{ states('sensor.time') >= (states('input_datetime.' + 'weekday_close_time')) }}
+    {% else %}
+      {{ states('sensor.time') >= (states('input_datetime.' + 'weekend_close_time')) }}
+    {% endif %}
+  sun_is_up: "{{ is_state('sun.sun', 'above_horizon') }}"
+
+action:
+  - choose:
+      # Mode intelligent - Ouverture (matin)
+      - conditions:
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "off"
+          - condition: or
+            conditions:
+              - condition: trigger
+                id: sunrise_trigger
+              - condition: trigger
+                id: weekday_open_trigger
+              - condition: trigger
+                id: weekend_open_trigger
+              - condition: trigger
+                id: periodic_check
+          - condition: template
+            value_template: >
+              {% set is_wkd = now().weekday() < 5 %}
+              {% set time_now = now().strftime("%H:%M") %}
+              {% set open_time = is_wkd and states('input_datetime.weekday_open_time') or states('input_datetime.weekend_open_time') %}
+              {% set sun_up = is_state('sun.sun', 'above_horizon') %}
+              {{ sun_up and time_now >= open_time }}
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input morning_position
+
+      # Mode intelligent - Fermeture (soir)
+      - conditions:
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "off"
+          - condition: or
+            conditions:
+              - condition: trigger
+                id: sunset_trigger
+              - condition: trigger
+                id: weekday_close_trigger
+              - condition: trigger
+                id: weekend_close_trigger
+              - condition: trigger
+                id: periodic_check
+          - condition: template
+            value_template: >
+              {% set is_wkd = now().weekday() < 5 %}
+              {% set time_now = now().strftime("%H:%M") %}
+              {% set close_time = is_wkd and states('input_datetime.weekday_close_time') or states('input_datetime.weekend_close_time') %}
+              {% set sun_down = is_state('sun.sun', 'below_horizon') %}
+              {{ sun_down or time_now >= close_time }}
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input evening_position
+
+      # Gestion horaire seule - Ouverture en semaine
+      - conditions:
+          - condition: trigger
+            id: weekday_open_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+          - condition: time
+            weekday:
+              - mon
+              - tue
+              - wed
+              - thu
+              - fri
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input morning_position
+
+      # Gestion horaire seule - Ouverture weekend
+      - conditions:
+          - condition: trigger
+            id: weekend_open_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+          - condition: time
+            weekday:
+              - sat
+              - sun
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input morning_position
+
+      # Gestion horaire seule - Fermeture en semaine
+      - conditions:
+          - condition: trigger
+            id: weekday_close_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+          - condition: time
+            weekday:
+              - mon
+              - tue
+              - wed
+              - thu
+              - fri
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input evening_position
+
+      # Gestion horaire seule - Fermeture weekend
+      - conditions:
+          - condition: trigger
+            id: weekend_close_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+          - condition: time
+            weekday:
+              - sat
+              - sun
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input evening_position
+      
+      # Lever du soleil - Ouverture des volets le matin
+      # Uniquement si les gestions horaires sont désactivées
+      - conditions:
+          - condition: trigger
+            id: sunrise_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "off"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input morning_position
+      
+      # Coucher du soleil - Fermeture des volets le soir
+      # Uniquement si les gestions horaires sont désactivées
+      - conditions:
+          - condition: trigger
+            id: sunset_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "off"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input evening_position
+      
+      # Mode été avec soleil direct et chaleur
+      - conditions:
+          - condition: state
+            entity_id: !input summer_mode
+            state: "on"
+          - condition: state
+            entity_id: sun.sun
+            state: "above_horizon"
+          - condition: template
+            value_template: >
+              {% set az = state_attr('sun.sun', 'azimuth') | float(0) %}
+              {% set fa = !input facade_orientation | float(180) %}
+              {% set diff = (az - fa) | abs %}
+              {% if diff > 180 %}
+                {% set diff = 360 - diff %}
+              {% endif %}
+              {% set el = state_attr('sun.sun', 'elevation') | float(0) %}
+              {{ is_state('sun.sun', 'above_horizon') and el > 0 and diff < 90 }}
+          - condition: numeric_state
+            entity_id: !input temperature_outdoor
+            above: !input temp_threshold_out
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input summer_position
+      
+      # Température intérieure élevée - Protection
+      - conditions:
+          - condition: numeric_state
+            entity_id: !input temperature_indoor
+            above: !input temp_threshold_in
+          - condition: numeric_state
+            entity_id: !input temperature_outdoor
+            above: !input temp_threshold_in
+          - condition: state
+            entity_id: sun.sun
+            state: "above_horizon"
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input summer_position
+
+            entity_id: !input enable_smart_scheduleblueprint:
+  name: Gestion Avancée des Volets Roulants
+  description: >
+    Automatisation complète pour un ou plusieurs volets roulants basée sur le soleil,
+    la température et le mode été/hiver. Permet le contrôle manuel,
+    la désactivation temporaire et la gestion horaire intelligente.
+  domain: automation
+  input:
+    cover_entity:
+      name: Volets roulants
+      description: Les entités des volets roulants à contrôler (sélection multiple possible)
+      selector:
+        entity:
+          domain: cover
+          multiple: true
+    temperature_indoor:
+      name: Capteur de température intérieure
+      description: Capteur de température intérieure
+      selector:
+        entity:
+          domain: sensor
+    temperature_outdoor:
+      name: Capteur de température extérieure
+      description: Capteur de température extérieure
+      selector:
+        entity:
+          domain: sensor
+    disable_automation:
+      name: Désactiver l'automatisation
+      description: Un interrupteur pour désactiver temporairement l'automatisation
+      selector:
+        entity:
+          domain: input_boolean
+    summer_mode:
+      name: Mode été
+      description: Activer le mode été (fermeture partielle en cas de chaleur)
+      selector:
+        entity:
+          domain: input_boolean
+    facade_orientation:
+      name: Orientation de la façade
+      description: Orientation en degrés (0=N, 90=E, 180=S, 270=O)
+      default: 180
+      selector:
+        number:
+          min: 0
+          max: 359
+          step: 1
+          mode: slider
+    morning_position:
+      name: Position au lever du soleil
+      description: Position du volet le matin (0-100%)
+      default: 100
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          mode: slider
+    evening_position:
+      name: Position au coucher du soleil
+      description: Position du volet le soir (0-100%)
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          mode: slider
+    summer_position:
+      name: Position en mode été
+      description: Position en cas de chaleur/soleil direct (0-100%)
+      default: 40
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          mode: slider
+    temp_threshold_out:
+      name: Seuil température extérieure
+      description: Seuil pour activer la protection solaire
+      default: 25
+      selector:
+        number:
+          min: 15
+          max: 40
+          step: 0.5
+          mode: box
+    temp_threshold_in:
+      name: Seuil température intérieure
+      description: Seuil pour maintenir la fraîcheur
+      default: 26
+      selector:
+        number:
+          min: 18
+          max: 40
+          step: 0.5
+          mode: box
+    morning_offset:
+      name: Décalage lever soleil
+      description: En minutes (- = avant, + = après)
+      default: 0
+      selector:
+        number:
+          min: -120
+          max: 120
+          step: 5
+          mode: box
+    evening_offset:
+      name: Décalage coucher soleil
+      description: En minutes (- = avant, + = après)
+      default: 0
+      selector:
+        number:
+          min: -120
+          max: 120
+          step: 5
+          mode: box
+    enable_time_schedule:
+      name: Activer la gestion horaire
+      description: Utiliser des horaires fixes (sans tenir compte du soleil)
+      default: false
+      selector:
+        boolean: {}
+    enable_smart_schedule:
+      name: Activer la gestion horaire intelligente
+      description: Combine les horaires fixes ET la position du soleil
+      default: false
+      selector:
+        boolean: {}
+    weekday_open_time:
+      name: Heure d'ouverture en semaine
+      description: Heure d'ouverture des volets en semaine (format HH:MM)
+      default: "07:00"
+      selector:
+        time: {}
+    weekday_close_time:
+      name: Heure de fermeture en semaine
+      description: Heure de fermeture des volets en semaine (format HH:MM)
+      default: "21:00"
+      selector:
+        time: {}
+    weekend_open_time:
+      name: Heure d'ouverture week-end
+      description: Heure d'ouverture des volets le week-end (format HH:MM)
+      default: "08:00"
+      selector:
+        time: {}
+    weekend_close_time:
+      name: Heure de fermeture week-end
+      description: Heure de fermeture des volets le week-end (format HH:MM)
+      default: "21:00"
+      selector:
+        time: {}
+
+mode: restart
+max_exceeded: silent
+
+trigger:
+  # Déclencheurs basés sur le soleil
+  - platform: sun
+    event: sunrise
+    offset: !input morning_offset
+    id: sunrise_trigger
+  - platform: sun
+    event: sunset
+    offset: !input evening_offset
+    id: sunset_trigger
+  
+  # Déclencheurs basés sur l'heure
+  - platform: time
+    at: !input weekday_open_time
+    id: weekday_open_trigger
+  - platform: time
+    at: !input weekday_close_time
+    id: weekday_close_trigger
+  - platform: time
+    at: !input weekend_open_time
+    id: weekend_open_trigger
+  - platform: time
+    at: !input weekend_close_time
+    id: weekend_close_trigger
+  
+  # Vérifications périodiques et changements d'état
+  - platform: time_pattern
+    minutes: "/15"
+    id: periodic_check
+  - platform: state
+    entity_id: !input summer_mode
+    id: mode_change
+  - platform: state
+    entity_id: !input disable_automation
+    id: disable_change
+  - platform: state
+    entity_id: !input temperature_indoor
+    id: temp_in_change
+  - platform: state
+    entity_id: !input temperature_outdoor
+    id: temp_out_change
+
+condition:
+  - condition: state
+    entity_id: !input disable_automation
+    state: "off"
+
+variables:
+  is_weekday: "{{ now().weekday() < 5 }}"
+  current_time: "{{ now().strftime('%H:%M') }}"
+  open_time: >
+    {% if now().weekday() < 5 %}
+      {{ states('sensor.time') >= (states('input_datetime.' + 'weekday_open_time')) }}
+    {% else %}
+      {{ states('sensor.time') >= (states('input_datetime.' + 'weekend_open_time')) }}
+    {% endif %}
+  close_time: >
+    {% if now().weekday() < 5 %}
+      {{ states('sensor.time') >= (states('input_datetime.' + 'weekday_close_time')) }}
+    {% else %}
+      {{ states('sensor.time') >= (states('input_datetime.' + 'weekend_close_time')) }}
+    {% endif %}
+  sun_is_up: "{{ is_state('sun.sun', 'above_horizon') }}"
+
+action:
+  - choose:
+      # Mode intelligent - Ouverture (matin)
+      - conditions:
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "off"
+          - condition: or
+            conditions:
+              - condition: trigger
+                id: sunrise_trigger
+              - condition: trigger
+                id: weekday_open_trigger
+              - condition: trigger
+                id: weekend_open_trigger
+              - condition: trigger
+                id: periodic_check
+          - condition: template
+            value_template: >
+              {% set is_wkd = now().weekday() < 5 %}
+              {% set time_now = now().strftime("%H:%M") %}
+              {% set open_time = is_wkd and states('input_datetime.weekday_open_time') or states('input_datetime.weekend_open_time') %}
+              {% set sun_up = is_state('sun.sun', 'above_horizon') %}
+              {{ sun_up and time_now >= open_time }}
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input morning_position
+
+      # Mode intelligent - Fermeture (soir)
+      - conditions:
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "off"
+          - condition: or
+            conditions:
+              - condition: trigger
+                id: sunset_trigger
+              - condition: trigger
+                id: weekday_close_trigger
+              - condition: trigger
+                id: weekend_close_trigger
+              - condition: trigger
+                id: periodic_check
+          - condition: template
+            value_template: >
+              {% set is_wkd = now().weekday() < 5 %}
+              {% set time_now = now().strftime("%H:%M") %}
+              {% set close_time = is_wkd and states('input_datetime.weekday_close_time') or states('input_datetime.weekend_close_time') %}
+              {% set sun_down = is_state('sun.sun', 'below_horizon') %}
+              {{ sun_down or time_now >= close_time }}
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input evening_position
+
+      # Gestion horaire seule - Ouverture en semaine
+      - conditions:
+          - condition: trigger
+            id: weekday_open_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+          - condition: time
+            weekday:
+              - mon
+              - tue
+              - wed
+              - thu
+              - fri
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input morning_position
+
+      # Gestion horaire seule - Ouverture weekend
+      - conditions:
+          - condition: trigger
+            id: weekend_open_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+          - condition: time
+            weekday:
+              - sat
+              - sun
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input morning_position
+
+      # Gestion horaire seule - Fermeture en semaine
+      - conditions:
+          - condition: trigger
+            id: weekday_close_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+          - condition: time
+            weekday:
+              - mon
+              - tue
+              - wed
+              - thu
+              - fri
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input evening_position
+
+      # Gestion horaire seule - Fermeture weekend
+      - conditions:
+          - condition: trigger
+            id: weekend_close_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+          - condition: time
+            weekday:
+              - sat
+              - sun
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input evening_position
+      
+      # Lever du soleil - Ouverture des volets le matin
+      # Uniquement si les gestions horaires sont désactivées
+      - conditions:
+          - condition: trigger
+            id: sunrise_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "off"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input morning_position
+      
+      # Coucher du soleil - Fermeture des volets le soir
+      # Uniquement si les gestions horaires sont désactivées
+      - conditions:
+          - condition: trigger
+            id: sunset_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "off"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input evening_position
+      
+      # Mode été avec soleil direct et chaleur
+      - conditions:
+          - condition: state
+            entity_id: !input summer_mode
+            state: "on"
+          - condition: state
+            entity_id: sun.sun
+            state: "above_horizon"
+          - condition: template
+            value_template: >
+              {% set az = state_attr('sun.sun', 'azimuth') | float(0) %}
+              {% set fa = !input facade_orientation | float(180) %}
+              {% set diff = (az - fa) | abs %}
+              {% if diff > 180 %}
+                {% set diff = 360 - diff %}
+              {% endif %}
+              {% set el = state_attr('sun.sun', 'elevation') | float(0) %}
+              {{ is_state('sun.sun', 'above_horizon') and el > 0 and diff < 90 }}
+          - condition: numeric_state
+            entity_id: !input temperature_outdoor
+            above: !input temp_threshold_out
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input summer_position
+      
+      # Température intérieure élevée - Protection
+      - conditions:
+          - condition: numeric_state
+            entity_id: !input temperature_indoor
+            above: !input temp_threshold_in
+          - condition: numeric_state
+            entity_id: !input temperature_outdoor
+            above: !input temp_threshold_in
+          - condition: state
+            entity_id: sun.sun
+            state: "above_horizon"
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input summer_position
+
+            state: "on"blueprint:
+  name: Gestion Avancée des Volets Roulants
+  description: >
+    Automatisation complète pour un ou plusieurs volets roulants basée sur le soleil,
+    la température et le mode été/hiver. Permet le contrôle manuel,
+    la désactivation temporaire et la gestion horaire intelligente.
+  domain: automation
+  input:
+    cover_entity:
+      name: Volets roulants
+      description: Les entités des volets roulants à contrôler (sélection multiple possible)
+      selector:
+        entity:
+          domain: cover
+          multiple: true
+    temperature_indoor:
+      name: Capteur de température intérieure
+      description: Capteur de température intérieure
+      selector:
+        entity:
+          domain: sensor
+    temperature_outdoor:
+      name: Capteur de température extérieure
+      description: Capteur de température extérieure
+      selector:
+        entity:
+          domain: sensor
+    disable_automation:
+      name: Désactiver l'automatisation
+      description: Un interrupteur pour désactiver temporairement l'automatisation
+      selector:
+        entity:
+          domain: input_boolean
+    summer_mode:
+      name: Mode été
+      description: Activer le mode été (fermeture partielle en cas de chaleur)
+      selector:
+        entity:
+          domain: input_boolean
+    facade_orientation:
+      name: Orientation de la façade
+      description: Orientation en degrés (0=N, 90=E, 180=S, 270=O)
+      default: 180
+      selector:
+        number:
+          min: 0
+          max: 359
+          step: 1
+          mode: slider
+    morning_position:
+      name: Position au lever du soleil
+      description: Position du volet le matin (0-100%)
+      default: 100
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          mode: slider
+    evening_position:
+      name: Position au coucher du soleil
+      description: Position du volet le soir (0-100%)
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          mode: slider
+    summer_position:
+      name: Position en mode été
+      description: Position en cas de chaleur/soleil direct (0-100%)
+      default: 40
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          mode: slider
+    temp_threshold_out:
+      name: Seuil température extérieure
+      description: Seuil pour activer la protection solaire
+      default: 25
+      selector:
+        number:
+          min: 15
+          max: 40
+          step: 0.5
+          mode: box
+    temp_threshold_in:
+      name: Seuil température intérieure
+      description: Seuil pour maintenir la fraîcheur
+      default: 26
+      selector:
+        number:
+          min: 18
+          max: 40
+          step: 0.5
+          mode: box
+    morning_offset:
+      name: Décalage lever soleil
+      description: En minutes (- = avant, + = après)
+      default: 0
+      selector:
+        number:
+          min: -120
+          max: 120
+          step: 5
+          mode: box
+    evening_offset:
+      name: Décalage coucher soleil
+      description: En minutes (- = avant, + = après)
+      default: 0
+      selector:
+        number:
+          min: -120
+          max: 120
+          step: 5
+          mode: box
+    enable_time_schedule:
+      name: Activer la gestion horaire
+      description: Utiliser des horaires fixes (sans tenir compte du soleil)
+      default: false
+      selector:
+        boolean: {}
+    enable_smart_schedule:
+      name: Activer la gestion horaire intelligente
+      description: Combine les horaires fixes ET la position du soleil
+      default: false
+      selector:
+        boolean: {}
+    weekday_open_time:
+      name: Heure d'ouverture en semaine
+      description: Heure d'ouverture des volets en semaine (format HH:MM)
+      default: "07:00"
+      selector:
+        time: {}
+    weekday_close_time:
+      name: Heure de fermeture en semaine
+      description: Heure de fermeture des volets en semaine (format HH:MM)
+      default: "21:00"
+      selector:
+        time: {}
+    weekend_open_time:
+      name: Heure d'ouverture week-end
+      description: Heure d'ouverture des volets le week-end (format HH:MM)
+      default: "08:00"
+      selector:
+        time: {}
+    weekend_close_time:
+      name: Heure de fermeture week-end
+      description: Heure de fermeture des volets le week-end (format HH:MM)
+      default: "21:00"
+      selector:
+        time: {}
+
+mode: restart
+max_exceeded: silent
+
+trigger:
+  # Déclencheurs basés sur le soleil
+  - platform: sun
+    event: sunrise
+    offset: !input morning_offset
+    id: sunrise_trigger
+  - platform: sun
+    event: sunset
+    offset: !input evening_offset
+    id: sunset_trigger
+  
+  # Déclencheurs basés sur l'heure
+  - platform: time
+    at: !input weekday_open_time
+    id: weekday_open_trigger
+  - platform: time
+    at: !input weekday_close_time
+    id: weekday_close_trigger
+  - platform: time
+    at: !input weekend_open_time
+    id: weekend_open_trigger
+  - platform: time
+    at: !input weekend_close_time
+    id: weekend_close_trigger
+  
+  # Vérifications périodiques et changements d'état
+  - platform: time_pattern
+    minutes: "/15"
+    id: periodic_check
+  - platform: state
+    entity_id: !input summer_mode
+    id: mode_change
+  - platform: state
+    entity_id: !input disable_automation
+    id: disable_change
+  - platform: state
+    entity_id: !input temperature_indoor
+    id: temp_in_change
+  - platform: state
+    entity_id: !input temperature_outdoor
+    id: temp_out_change
+
+condition:
+  - condition: state
+    entity_id: !input disable_automation
+    state: "off"
+
+variables:
+  is_weekday: "{{ now().weekday() < 5 }}"
+  current_time: "{{ now().strftime('%H:%M') }}"
+  open_time: >
+    {% if now().weekday() < 5 %}
+      {{ states('sensor.time') >= (states('input_datetime.' + 'weekday_open_time')) }}
+    {% else %}
+      {{ states('sensor.time') >= (states('input_datetime.' + 'weekend_open_time')) }}
+    {% endif %}
+  close_time: >
+    {% if now().weekday() < 5 %}
+      {{ states('sensor.time') >= (states('input_datetime.' + 'weekday_close_time')) }}
+    {% else %}
+      {{ states('sensor.time') >= (states('input_datetime.' + 'weekend_close_time')) }}
+    {% endif %}
+  sun_is_up: "{{ is_state('sun.sun', 'above_horizon') }}"
+
+action:
+  - choose:
+      # Mode intelligent - Ouverture (matin)
+      - conditions:
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "off"
+          - condition: or
+            conditions:
+              - condition: trigger
+                id: sunrise_trigger
+              - condition: trigger
+                id: weekday_open_trigger
+              - condition: trigger
+                id: weekend_open_trigger
+              - condition: trigger
+                id: periodic_check
+          - condition: template
+            value_template: >
+              {% set is_wkd = now().weekday() < 5 %}
+              {% set time_now = now().strftime("%H:%M") %}
+              {% set open_time = is_wkd and states('input_datetime.weekday_open_time') or states('input_datetime.weekend_open_time') %}
+              {% set sun_up = is_state('sun.sun', 'above_horizon') %}
+              {{ sun_up and time_now >= open_time }}
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input morning_position
+
+      # Mode intelligent - Fermeture (soir)
+      - conditions:
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "off"
+          - condition: or
+            conditions:
+              - condition: trigger
+                id: sunset_trigger
+              - condition: trigger
+                id: weekday_close_trigger
+              - condition: trigger
+                id: weekend_close_trigger
+              - condition: trigger
+                id: periodic_check
+          - condition: template
+            value_template: >
+              {% set is_wkd = now().weekday() < 5 %}
+              {% set time_now = now().strftime("%H:%M") %}
+              {% set close_time = is_wkd and states('input_datetime.weekday_close_time') or states('input_datetime.weekend_close_time') %}
+              {% set sun_down = is_state('sun.sun', 'below_horizon') %}
+              {{ sun_down or time_now >= close_time }}
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input evening_position
+
+      # Gestion horaire seule - Ouverture en semaine
+      - conditions:
+          - condition: trigger
+            id: weekday_open_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+          - condition: time
+            weekday:
+              - mon
+              - tue
+              - wed
+              - thu
+              - fri
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input morning_position
+
+      # Gestion horaire seule - Ouverture weekend
+      - conditions:
+          - condition: trigger
+            id: weekend_open_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+          - condition: time
+            weekday:
+              - sat
+              - sun
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input morning_position
+
+      # Gestion horaire seule - Fermeture en semaine
+      - conditions:
+          - condition: trigger
+            id: weekday_close_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+          - condition: time
+            weekday:
+              - mon
+              - tue
+              - wed
+              - thu
+              - fri
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input evening_position
+
+      # Gestion horaire seule - Fermeture weekend
+      - conditions:
+          - condition: trigger
+            id: weekend_close_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+          - condition: time
+            weekday:
+              - sat
+              - sun
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input evening_position
+      
+      # Lever du soleil - Ouverture des volets le matin
+      # Uniquement si les gestions horaires sont désactivées
+      - conditions:
+          - condition: trigger
+            id: sunrise_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "off"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input morning_position
+      
+      # Coucher du soleil - Fermeture des volets le soir
+      # Uniquement si les gestions horaires sont désactivées
+      - conditions:
+          - condition: trigger
+            id: sunset_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "off"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input evening_position
+      
+      # Mode été avec soleil direct et chaleur
+      - conditions:
+          - condition: state
+            entity_id: !input summer_mode
+            state: "on"
+          - condition: state
+            entity_id: sun.sun
+            state: "above_horizon"
+          - condition: template
+            value_template: >
+              {% set az = state_attr('sun.sun', 'azimuth') | float(0) %}
+              {% set fa = !input facade_orientation | float(180) %}
+              {% set diff = (az - fa) | abs %}
+              {% if diff > 180 %}
+                {% set diff = 360 - diff %}
+              {% endif %}
+              {% set el = state_attr('sun.sun', 'elevation') | float(0) %}
+              {{ is_state('sun.sun', 'above_horizon') and el > 0 and diff < 90 }}
+          - condition: numeric_state
+            entity_id: !input temperature_outdoor
+            above: !input temp_threshold_out
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input summer_position
+      
+      # Température intérieure élevée - Protection
+      - conditions:
+          - condition: numeric_state
+            entity_id: !input temperature_indoor
+            above: !input temp_threshold_in
+          - condition: numeric_state
+            entity_id: !input temperature_outdoor
+            above: !input temp_threshold_in
+          - condition: state
+            entity_id: sun.sun
+            state: "above_horizon"
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input summer_position
+
+          - condition: stateblueprint:
+  name: Gestion Avancée des Volets Roulants
+  description: >
+    Automatisation complète pour un ou plusieurs volets roulants basée sur le soleil,
+    la température et le mode été/hiver. Permet le contrôle manuel,
+    la désactivation temporaire et la gestion horaire intelligente.
+  domain: automation
+  input:
+    cover_entity:
+      name: Volets roulants
+      description: Les entités des volets roulants à contrôler (sélection multiple possible)
+      selector:
+        entity:
+          domain: cover
+          multiple: true
+    temperature_indoor:
+      name: Capteur de température intérieure
+      description: Capteur de température intérieure
+      selector:
+        entity:
+          domain: sensor
+    temperature_outdoor:
+      name: Capteur de température extérieure
+      description: Capteur de température extérieure
+      selector:
+        entity:
+          domain: sensor
+    disable_automation:
+      name: Désactiver l'automatisation
+      description: Un interrupteur pour désactiver temporairement l'automatisation
+      selector:
+        entity:
+          domain: input_boolean
+    summer_mode:
+      name: Mode été
+      description: Activer le mode été (fermeture partielle en cas de chaleur)
+      selector:
+        entity:
+          domain: input_boolean
+    facade_orientation:
+      name: Orientation de la façade
+      description: Orientation en degrés (0=N, 90=E, 180=S, 270=O)
+      default: 180
+      selector:
+        number:
+          min: 0
+          max: 359
+          step: 1
+          mode: slider
+    morning_position:
+      name: Position au lever du soleil
+      description: Position du volet le matin (0-100%)
+      default: 100
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          mode: slider
+    evening_position:
+      name: Position au coucher du soleil
+      description: Position du volet le soir (0-100%)
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          mode: slider
+    summer_position:
+      name: Position en mode été
+      description: Position en cas de chaleur/soleil direct (0-100%)
+      default: 40
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          mode: slider
+    temp_threshold_out:
+      name: Seuil température extérieure
+      description: Seuil pour activer la protection solaire
+      default: 25
+      selector:
+        number:
+          min: 15
+          max: 40
+          step: 0.5
+          mode: box
+    temp_threshold_in:
+      name: Seuil température intérieure
+      description: Seuil pour maintenir la fraîcheur
+      default: 26
+      selector:
+        number:
+          min: 18
+          max: 40
+          step: 0.5
+          mode: box
+    morning_offset:
+      name: Décalage lever soleil
+      description: En minutes (- = avant, + = après)
+      default: 0
+      selector:
+        number:
+          min: -120
+          max: 120
+          step: 5
+          mode: box
+    evening_offset:
+      name: Décalage coucher soleil
+      description: En minutes (- = avant, + = après)
+      default: 0
+      selector:
+        number:
+          min: -120
+          max: 120
+          step: 5
+          mode: box
+    enable_time_schedule:
+      name: Activer la gestion horaire
+      description: Utiliser des horaires fixes (sans tenir compte du soleil)
+      default: false
+      selector:
+        boolean: {}
+    enable_smart_schedule:
+      name: Activer la gestion horaire intelligente
+      description: Combine les horaires fixes ET la position du soleil
+      default: false
+      selector:
+        boolean: {}
+    weekday_open_time:
+      name: Heure d'ouverture en semaine
+      description: Heure d'ouverture des volets en semaine (format HH:MM)
+      default: "07:00"
+      selector:
+        time: {}
+    weekday_close_time:
+      name: Heure de fermeture en semaine
+      description: Heure de fermeture des volets en semaine (format HH:MM)
+      default: "21:00"
+      selector:
+        time: {}
+    weekend_open_time:
+      name: Heure d'ouverture week-end
+      description: Heure d'ouverture des volets le week-end (format HH:MM)
+      default: "08:00"
+      selector:
+        time: {}
+    weekend_close_time:
+      name: Heure de fermeture week-end
+      description: Heure de fermeture des volets le week-end (format HH:MM)
+      default: "21:00"
+      selector:
+        time: {}
+
+mode: restart
+max_exceeded: silent
+
+trigger:
+  # Déclencheurs basés sur le soleil
+  - platform: sun
+    event: sunrise
+    offset: !input morning_offset
+    id: sunrise_trigger
+  - platform: sun
+    event: sunset
+    offset: !input evening_offset
+    id: sunset_trigger
+  
+  # Déclencheurs basés sur l'heure
+  - platform: time
+    at: !input weekday_open_time
+    id: weekday_open_trigger
+  - platform: time
+    at: !input weekday_close_time
+    id: weekday_close_trigger
+  - platform: time
+    at: !input weekend_open_time
+    id: weekend_open_trigger
+  - platform: time
+    at: !input weekend_close_time
+    id: weekend_close_trigger
+  
+  # Vérifications périodiques et changements d'état
+  - platform: time_pattern
+    minutes: "/15"
+    id: periodic_check
+  - platform: state
+    entity_id: !input summer_mode
+    id: mode_change
+  - platform: state
+    entity_id: !input disable_automation
+    id: disable_change
+  - platform: state
+    entity_id: !input temperature_indoor
+    id: temp_in_change
+  - platform: state
+    entity_id: !input temperature_outdoor
+    id: temp_out_change
+
+condition:
+  - condition: state
+    entity_id: !input disable_automation
+    state: "off"
+
+variables:
+  is_weekday: "{{ now().weekday() < 5 }}"
+  current_time: "{{ now().strftime('%H:%M') }}"
+  open_time: >
+    {% if now().weekday() < 5 %}
+      {{ states('sensor.time') >= (states('input_datetime.' + 'weekday_open_time')) }}
+    {% else %}
+      {{ states('sensor.time') >= (states('input_datetime.' + 'weekend_open_time')) }}
+    {% endif %}
+  close_time: >
+    {% if now().weekday() < 5 %}
+      {{ states('sensor.time') >= (states('input_datetime.' + 'weekday_close_time')) }}
+    {% else %}
+      {{ states('sensor.time') >= (states('input_datetime.' + 'weekend_close_time')) }}
+    {% endif %}
+  sun_is_up: "{{ is_state('sun.sun', 'above_horizon') }}"
+
+action:
+  - choose:
+      # Mode intelligent - Ouverture (matin)
+      - conditions:
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "off"
+          - condition: or
+            conditions:
+              - condition: trigger
+                id: sunrise_trigger
+              - condition: trigger
+                id: weekday_open_trigger
+              - condition: trigger
+                id: weekend_open_trigger
+              - condition: trigger
+                id: periodic_check
+          - condition: template
+            value_template: >
+              {% set is_wkd = now().weekday() < 5 %}
+              {% set time_now = now().strftime("%H:%M") %}
+              {% set open_time = is_wkd and states('input_datetime.weekday_open_time') or states('input_datetime.weekend_open_time') %}
+              {% set sun_up = is_state('sun.sun', 'above_horizon') %}
+              {{ sun_up and time_now >= open_time }}
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input morning_position
+
+      # Mode intelligent - Fermeture (soir)
+      - conditions:
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "off"
+          - condition: or
+            conditions:
+              - condition: trigger
+                id: sunset_trigger
+              - condition: trigger
+                id: weekday_close_trigger
+              - condition: trigger
+                id: weekend_close_trigger
+              - condition: trigger
+                id: periodic_check
+          - condition: template
+            value_template: >
+              {% set is_wkd = now().weekday() < 5 %}
+              {% set time_now = now().strftime("%H:%M") %}
+              {% set close_time = is_wkd and states('input_datetime.weekday_close_time') or states('input_datetime.weekend_close_time') %}
+              {% set sun_down = is_state('sun.sun', 'below_horizon') %}
+              {{ sun_down or time_now >= close_time }}
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input evening_position
+
+      # Gestion horaire seule - Ouverture en semaine
+      - conditions:
+          - condition: trigger
+            id: weekday_open_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+          - condition: time
+            weekday:
+              - mon
+              - tue
+              - wed
+              - thu
+              - fri
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input morning_position
+
+      # Gestion horaire seule - Ouverture weekend
+      - conditions:
+          - condition: trigger
+            id: weekend_open_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+          - condition: time
+            weekday:
+              - sat
+              - sun
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input morning_position
+
+      # Gestion horaire seule - Fermeture en semaine
+      - conditions:
+          - condition: trigger
+            id: weekday_close_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+          - condition: time
+            weekday:
+              - mon
+              - tue
+              - wed
+              - thu
+              - fri
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input evening_position
+
+      # Gestion horaire seule - Fermeture weekend
+      - conditions:
+          - condition: trigger
+            id: weekend_close_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "on"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+          - condition: time
+            weekday:
+              - sat
+              - sun
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input evening_position
+      
+      # Lever du soleil - Ouverture des volets le matin
+      # Uniquement si les gestions horaires sont désactivées
+      - conditions:
+          - condition: trigger
+            id: sunrise_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "off"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input morning_position
+      
+      # Coucher du soleil - Fermeture des volets le soir
+      # Uniquement si les gestions horaires sont désactivées
+      - conditions:
+          - condition: trigger
+            id: sunset_trigger
+          - condition: state
+            entity_id: !input enable_time_schedule
+            state: "off"
+          - condition: state
+            entity_id: !input enable_smart_schedule
+            state: "off"
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input evening_position
+      
+      # Mode été avec soleil direct et chaleur
+      - conditions:
+          - condition: state
+            entity_id: !input summer_mode
+            state: "on"
+          - condition: state
+            entity_id: sun.sun
+            state: "above_horizon"
+          - condition: template
+            value_template: >
+              {% set az = state_attr('sun.sun', 'azimuth') | float(0) %}
+              {% set fa = !input facade_orientation | float(180) %}
+              {% set diff = (az - fa) | abs %}
+              {% if diff > 180 %}
+                {% set diff = 360 - diff %}
+              {% endif %}
+              {% set el = state_attr('sun.sun', 'elevation') | float(0) %}
+              {{ is_state('sun.sun', 'above_horizon') and el > 0 and diff < 90 }}
+          - condition: numeric_state
+            entity_id: !input temperature_outdoor
+            above: !input temp_threshold_out
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input summer_position
+      
+      # Température intérieure élevée - Protection
+      - conditions:
+          - condition: numeric_state
+            entity_id: !input temperature_indoor
+            above: !input temp_threshold_in
+          - condition: numeric_state
+            entity_id: !input temperature_outdoor
+            above: !input temp_threshold_in
+          - condition: state
+            entity_id: sun.sun
+            state: "above_horizon"
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: !input summer_position
+
             entity_id: !input enable_time_schedule
             state: "off"
           - condition: or
