@@ -158,7 +158,6 @@ mode: restart
 max_exceeded: silent
 
 trigger:
-  # Déclencheurs basés sur le soleil
   - platform: sun
     event: sunrise
     offset: !input morning_offset
@@ -167,8 +166,6 @@ trigger:
     event: sunset
     offset: !input evening_offset
     id: sunset_trigger
-  
-  # Déclencheurs basés sur l'heure
   - platform: time
     at: !input weekday_open_time
     id: weekday_open_trigger
@@ -181,8 +178,6 @@ trigger:
   - platform: time
     at: !input weekend_close_time
     id: weekend_close_trigger
-  
-  # Vérifications périodiques et changements d'état
   - platform: time_pattern
     minutes: "/15"
     id: periodic_check
@@ -203,23 +198,6 @@ condition:
   - condition: state
     entity_id: !input disable_automation
     state: "off"
-
-variables:
-  is_weekday: "{{ now().weekday() < 5 }}"
-  current_time: "{{ now().strftime('%H:%M') }}"
-  open_time: >
-    {% if now().weekday() < 5 %}
-      {{ states('sensor.time') >= (states('input_datetime.' + 'weekday_open_time')) }}
-    {% else %}
-      {{ states('sensor.time') >= (states('input_datetime.' + 'weekend_open_time')) }}
-    {% endif %}
-  close_time: >
-    {% if now().weekday() < 5 %}
-      {{ states('sensor.time') >= (states('input_datetime.' + 'weekday_close_time')) }}
-    {% else %}
-      {{ states('sensor.time') >= (states('input_datetime.' + 'weekend_close_time')) }}
-    {% endif %}
-  sun_is_up: "{{ is_state('sun.sun', 'above_horizon') }}"
 
 action:
   - choose:
@@ -245,7 +223,7 @@ action:
             value_template: >
               {% set is_wkd = now().weekday() < 5 %}
               {% set time_now = now().strftime("%H:%M") %}
-              {% set open_time = is_wkd and states('input_datetime.weekday_open_time') or states('input_datetime.weekend_open_time') %}
+              {% set open_time = is_wkd and (states('input_datetime.weekday_open_time') or '07:00') or (states('input_datetime.weekend_open_time') or '08:00') %}
               {% set sun_up = is_state('sun.sun', 'above_horizon') %}
               {{ sun_up and time_now >= open_time }}
         sequence:
@@ -277,7 +255,7 @@ action:
             value_template: >
               {% set is_wkd = now().weekday() < 5 %}
               {% set time_now = now().strftime("%H:%M") %}
-              {% set close_time = is_wkd and states('input_datetime.weekday_close_time') or states('input_datetime.weekend_close_time') %}
+              {% set close_time = is_wkd and (states('input_datetime.weekday_close_time') or '21:00') or (states('input_datetime.weekend_close_time') or '21:00') %}
               {% set sun_down = is_state('sun.sun', 'below_horizon') %}
               {{ sun_down or time_now >= close_time }}
         sequence:
@@ -377,8 +355,7 @@ action:
             data:
               position: !input evening_position
       
-      # Lever du soleil - Ouverture des volets le matin
-      # Uniquement si les gestions horaires sont désactivées
+      # Lever du soleil - Ouverture des volets le matin (si pas de gestion horaire)
       - conditions:
           - condition: trigger
             id: sunrise_trigger
@@ -395,8 +372,7 @@ action:
             data:
               position: !input morning_position
       
-      # Coucher du soleil - Fermeture des volets le soir
-      # Uniquement si les gestions horaires sont désactivées
+      # Coucher du soleil - Fermeture des volets le soir (si pas de gestion horaire)
       - conditions:
           - condition: trigger
             id: sunset_trigger
@@ -424,7 +400,7 @@ action:
           - condition: template
             value_template: >
               {% set az = state_attr('sun.sun', 'azimuth') | float(0) %}
-              {% set fa = !input facade_orientation | float(180) %}
+              {% set fa = float(states('input_number.facade_orientation') or 180) %}
               {% set diff = (az - fa) | abs %}
               {% if diff > 180 %}
                 {% set diff = 360 - diff %}
